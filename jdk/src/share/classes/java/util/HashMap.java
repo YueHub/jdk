@@ -128,6 +128,8 @@ public class HashMap<K,V>
 
     /**
      * The default initial capacity - MUST be a power of two.
+     * 容量默认值
+     * 注意容量必须是 2 的指数（以便取模时用 hash & (length - 1) 进行优化）
      */
     static final int DEFAULT_INITIAL_CAPACITY = 16;
 
@@ -135,34 +137,50 @@ public class HashMap<K,V>
      * The maximum capacity, used if a higher value is implicitly specified
      * by either of the constructors with arguments.
      * MUST be a power of two <= 1<<30.
+     * HashMap 的容量上限（同样必须是 2 的指数）
+     * 当使用方传入容量值 capacity 时，使用该值作为上限，避免容量过大
      */
     static final int MAXIMUM_CAPACITY = 1 << 30;
 
     /**
      * The load factor used when none specified in constructor.
+     * 负载因子默认值
+     * 如果没有被使用方在构造函数中指定，则使用该默认值
      */
     static final float DEFAULT_LOAD_FACTOR = 0.75f;
 
     /**
      * The table, resized as necessary. Length MUST Always be a power of two.
+     * 哈希桶（哈希表）
+     * 忽略 table 字段序列化
+     * HashMap 采用 writeObject 和 readObject 实现自定义序列化
+     * 原因：
+     * 如果 key 没有重写 hashCode,则调用 Object 类默认的 hashCode(native 方法)
+     * 不同的 JVM 可能会有不同结果，这意味着 HashMap 内元素的位置可能会发生变化
+     * 如果直接对 table 字段进行反序列化，则可能出现问题
      */
     transient Entry[] table;
 
     /**
      * The number of key-value mappings contained in this map.
+     * 键值对的元素个数
+     * 忽略 size 字段序列化
+     * HashMap 采用 writeObject 和 readObject 实现自定义序列化
      */
     transient int size;
 
     /**
      * The next size value at which to resize (capacity * load factor).
      * @serial
+     * threshold = capacity * loadFactor
+     * 表示 HashMap 进行 resize 的阈值
      */
     int threshold;
 
     /**
      * The load factor for the hash table.
-     *
      * @serial
+     * 负载因子
      */
     final float loadFactor;
 
@@ -172,6 +190,13 @@ public class HashMap<K,V>
      * the HashMap or otherwise modify its internal structure (e.g.,
      * rehash).  This field is used to make iterators on Collection-views of
      * the HashMap fail-fast.  (See ConcurrentModificationException).
+     * HashMap 的修改次数（元素个数变化的修改）
+     * HashMap 迭代时的 fail-fast 机制：
+     * 使用迭代器对某一个 hashMap 迭代时，过程中时不允许进行添加、删除、清空等操作的，因为这会导致遍历结果混乱和不正确
+     * modCount 就是为了这种情况，开始遍历时，记录初始化。之后的遍历都会检查该数值，如果一直不变，意味着过程中没有修改操作，
+     * 则遍历时安全的。
+     * 但如果发现 modCount 发生了添加，说明此时 hashmap 已经被修改，则 fail-fast 快速失败终止遍历
+     * 抛出 ConcurrentModificationException 异常
      */
     transient int modCount;
 
@@ -183,25 +208,34 @@ public class HashMap<K,V>
      * @param  loadFactor      the load factor
      * @throws IllegalArgumentException if the initial capacity is negative
      *         or the load factor is nonpositive
+     * 创建 HashMap，并指定容量 capacity 和 负载因子 loadFactor
      */
     public HashMap(int initialCapacity, float loadFactor) {
+        // 容量不能小于 0
         if (initialCapacity < 0)
             throw new IllegalArgumentException("Illegal initial capacity: " +
                                                initialCapacity);
+        // 容量上限为 MAXIMUM_CAPACITY
         if (initialCapacity > MAXIMUM_CAPACITY)
             initialCapacity = MAXIMUM_CAPACITY;
+        // 负载因子不能小于 0
         if (loadFactor <= 0 || Float.isNaN(loadFactor))
             throw new IllegalArgumentException("Illegal load factor: " +
                                                loadFactor);
 
         // Find a power of 2 >= initialCapacity
+        // capacity 必须为 2 的指数，传入的 initialCapacity 可能不符合条件
+        // 则循环找到小于 initialCapacity 最大 "2 的指数"
         int capacity = 1;
         while (capacity < initialCapacity)
             capacity <<= 1;
-
+        // 初始化负载因子
         this.loadFactor = loadFactor;
+        // 计算 resize 阈值
         threshold = (int)(capacity * loadFactor);
+        // 创建哈希表（哈希桶）
         table = new Entry[capacity];
+        // 子类初始化 Hook 方法
         init();
     }
 
@@ -211,6 +245,7 @@ public class HashMap<K,V>
      *
      * @param  initialCapacity the initial capacity.
      * @throws IllegalArgumentException if the initial capacity is negative.
+     * 创建 HashMap，只指定初始化容量，负载因子使用默认的 0.75
      */
     public HashMap(int initialCapacity) {
         this(initialCapacity, DEFAULT_LOAD_FACTOR);
@@ -219,11 +254,18 @@ public class HashMap<K,V>
     /**
      * Constructs an empty <tt>HashMap</tt> with the default initial capacity
      * (16) and the default load factor (0.75).
+     * 创建一个空 HashMap
+     * 容量 capacity 初始化为默认的 16
+     * 负载因子 loadFactor 初始化为默认的 0.75
      */
     public HashMap() {
+        // 负载因子初始化为默认值
         this.loadFactor = DEFAULT_LOAD_FACTOR;
+        // threshold = capacity * loadFactor; threshold 即哈希表进行重构(resize)的阈值
         threshold = (int)(DEFAULT_INITIAL_CAPACITY * DEFAULT_LOAD_FACTOR);
+        // 创建哈希表
         table = new Entry[DEFAULT_INITIAL_CAPACITY];
+        // 子类初始化的 Hook 方法
         init();
     }
 
@@ -235,10 +277,14 @@ public class HashMap<K,V>
      *
      * @param   m the map whose mappings are to be placed in this map
      * @throws  NullPointerException if the specified map is null
+     * 创建 HashMap, 且初始化从参数 m 中拷贝所有元素
      */
     public HashMap(Map<? extends K, ? extends V> m) {
+        // 容量需要取 “默认值” 和 “参数 m 中元素个数” 两者中的较大值
+        // 负载因子 loadFactor 取默认值即可
         this(Math.max((int) (m.size() / DEFAULT_LOAD_FACTOR) + 1,
                       DEFAULT_INITIAL_CAPACITY), DEFAULT_LOAD_FACTOR);
+        // 拷贝添加所有的元素
         putAllForCreate(m);
     }
 
@@ -250,6 +296,8 @@ public class HashMap<K,V>
      * after HashMap has been initialized but before any entries have
      * been inserted.  (In the absence of this method, readObject would
      * require explicit knowledge of subclasses.)
+     * 在 HashMap 创建之后，但未插入任何数据之前调用的 Hook 方法，为子类提供初始化的能力
+     * 该方法在所有的构造器以及 clone, readObject 方法中均会调用
      */
     void init() {
     }
@@ -260,6 +308,9 @@ public class HashMap<K,V>
      * because HashMap uses power-of-two length hash tables, that
      * otherwise encounter collisions for hashCodes that do not differ
      * in lower bits. Note: Null keys always map to hash 0, thus index 0.
+     * hash 算法可参考：
+     * https://stackoverflow.com/questions/9335169/understanding-strange-java-hash-function
+     * 
      */
     static int hash(int h) {
         // This function ensures that hashCodes that differ only by
@@ -271,6 +322,14 @@ public class HashMap<K,V>
 
     /**
      * Returns index for hash code h.
+     * 计算 hash 值对应的下标，即 hash % length
+     * 但由于 length 为 2 的指数，可优化为: hash & (length-1)
+     * 分析：
+     *  length： 10000 (十进制 16) 
+     *  length - 1: 01111
+     *  hash： 01010101...01001
+     *  hash & (length - 1): 00000000...01001
+     *  即取 hash 二进制位末尾几位的二进制，这和十进制取模的含义相同
      */
     static int indexFor(int h, int length) {
         return h & (length-1);
@@ -280,6 +339,8 @@ public class HashMap<K,V>
      * Returns the number of key-value mappings in this map.
      *
      * @return the number of key-value mappings in this map
+     * 
+     * 返回 HashMap 元素（键值对）个数
      */
     public int size() {
         return size;
@@ -289,6 +350,9 @@ public class HashMap<K,V>
      * Returns <tt>true</tt> if this map contains no key-value mappings.
      *
      * @return <tt>true</tt> if this map contains no key-value mappings
+     * 
+     * 判断 HashMap 是否为空（即不存在任何 key-value 键值对）
+     * 直接判断 size 是否为 0 即可
      */
     public boolean isEmpty() {
         return size == 0;
@@ -310,11 +374,13 @@ public class HashMap<K,V>
      * distinguish these two cases.
      *
      * @see #put(Object, Object)
+     * 获取 key 对应的 value
      */
     public V get(Object key) {
         if (key == null)
             return getForNullKey();
         int hash = hash(key.hashCode());
+        /* 遍历哈希桶内的链表，依次判断 key 是否相同 */
         for (Entry<K,V> e = table[indexFor(hash, table.length)];
              e != null;
              e = e.next) {
@@ -331,6 +397,7 @@ public class HashMap<K,V>
      * for the sake of performance in the two most commonly used
      * operations (get and put), but incorporated with conditionals in
      * others.
+     * 获取 key 为 null 的 value
      */
     private V getForNullKey() {
         for (Entry<K,V> e = table[0]; e != null; e = e.next) {
@@ -347,6 +414,7 @@ public class HashMap<K,V>
      * @param   key   The key whose presence in this map is to be tested
      * @return <tt>true</tt> if this map contains a mapping for the specified
      * key.
+     * 判断 hashmap 中是否包含某个 key
      */
     public boolean containsKey(Object key) {
         return getEntry(key) != null;
@@ -356,6 +424,7 @@ public class HashMap<K,V>
      * Returns the entry associated with the specified key in the
      * HashMap.  Returns null if the HashMap contains no mapping
      * for the key.
+     * 获取 key 对应的键值对
      */
     final Entry<K,V> getEntry(Object key) {
         int hash = (key == null) ? 0 : hash(key.hashCode());
@@ -382,31 +451,42 @@ public class HashMap<K,V>
      *         <tt>null</tt> if there was no mapping for <tt>key</tt>.
      *         (A <tt>null</tt> return can also indicate that the map
      *         previously associated <tt>null</tt> with <tt>key</tt>.)
+     * hashmap 的 put 方法
+     * 如果 key 不存在，则新增元素
+     * 如果 key 已存在，则更新元素
      */
     public V put(K key, V value) {
         if (key == null)
             return putForNullKey(value);
+        // 计算 key 的 hash
         int hash = hash(key.hashCode());
+        // 定位到 key 对应的哈希桶的下标
         int i = indexFor(hash, table.length);
+        // 遍历哈希桶中链表
         for (Entry<K,V> e = table[i]; e != null; e = e.next) {
             Object k;
+            // 判断 key 相同：hash 相同, key == 相等， key equals 相等
             if (e.hash == hash && ((k = e.key) == key || key.equals(k))) {
+                // key 已存在，替换更新
                 V oldValue = e.value;
                 e.value = value;
                 e.recordAccess(this);
                 return oldValue;
             }
         }
-
+        // key 未存在，修改计数 +1
         modCount++;
+        // 新增元素
         addEntry(hash, key, value, i);
         return null;
     }
 
     /**
      * Offloaded version of put for null keys
+     * 添加 key 为 null 的键值对
      */
     private V putForNullKey(V value) {
+        /* 如果已有 key 为 null 的键值对，则更新 value */
         for (Entry<K,V> e = table[0]; e != null; e = e.next) {
             if (e.key == null) {
                 V oldValue = e.value;
@@ -415,7 +495,10 @@ public class HashMap<K,V>
                 return oldValue;
             }
         }
+        // 表示 key 为 null 的键值对为新元素，
+        // 则表示对该 hashmap 进行了一次修改，modCount++
         modCount++;
+        // hashmap 添加元素
         addEntry(0, null, value, 0);
         return null;
     }
@@ -434,6 +517,7 @@ public class HashMap<K,V>
          * Look for preexisting entry for key.  This will never happen for
          * clone or deserialize.  It will only happen for construction if the
          * input Map is a sorted map whose ordering is inconsistent w/ equals.
+         * 如果是已存在的 key，则更新 value
          */
         for (Entry<K,V> e = table[i]; e != null; e = e.next) {
             Object k;
@@ -443,11 +527,12 @@ public class HashMap<K,V>
                 return;
             }
         }
-
+        /* 如果是未存在的 key，则新增元素 */
         createEntry(hash, key, value, i);
     }
 
     private void putAllForCreate(Map<? extends K, ? extends V> m) {
+        // 遍历要拷贝的 m，依次添加元素
         for (Map.Entry<? extends K, ? extends V> e : m.entrySet())
             putForCreate(e.getKey(), e.getValue());
     }
@@ -465,18 +550,24 @@ public class HashMap<K,V>
      *        must be greater than current capacity unless current
      *        capacity is MAXIMUM_CAPACITY (in which case value
      *        is irrelevant).
+     * hashmap 元素个数达到阈值
+     * 则容量扩展为原先的 2 倍，并且对所有元素进行 resize
      */
     void resize(int newCapacity) {
         Entry[] oldTable = table;
         int oldCapacity = oldTable.length;
+        // 如果容量已经达到上限，则阈值上升为 Integer 的上限
         if (oldCapacity == MAXIMUM_CAPACITY) {
             threshold = Integer.MAX_VALUE;
             return;
         }
-
+        // 创建新的哈希桶
         Entry[] newTable = new Entry[newCapacity];
+        // 对所有元素重新进行 hash
         transfer(newTable);
+        // 更新 table 变量
         table = newTable;
+        // 更新阈值
         threshold = (int)(newCapacity * loadFactor);
     }
 
@@ -484,17 +575,23 @@ public class HashMap<K,V>
      * Transfers all entries from current table to newTable.
      */
     void transfer(Entry[] newTable) {
+        // 旧哈希桶
         Entry[] src = table;
         int newCapacity = newTable.length;
         for (int j = 0; j < src.length; j++) {
+            // 旧哈希桶内第一个元素
             Entry<K,V> e = src[j];
             if (e != null) {
                 src[j] = null;
+                // 遍历哈希桶链表
                 do {
                     Entry<K,V> next = e.next;
+                    // 计算新下标
                     int i = indexFor(e.hash, newCapacity);
+                    // 头部插入
                     e.next = newTable[i];
                     newTable[i] = e;
+                    // 处理链表的下一个元素
                     e = next;
                 } while (e != null);
             }
@@ -508,6 +605,8 @@ public class HashMap<K,V>
      *
      * @param m mappings to be stored in this map
      * @throws NullPointerException if the specified map is null
+     * 将参数 m 中的所有元素复制到当前的 hashmap 中，
+     * 如果存在相同的 key，则会覆盖更新
      */
     public void putAll(Map<? extends K, ? extends V> m) {
         int numKeysToBeAdded = m.size();
@@ -522,18 +621,21 @@ public class HashMap<K,V>
          * if the keys to be added overlap with the keys already in this map.
          * By using the conservative calculation, we subject ourself
          * to at most one extra resize.
+         * 如果复制的元素个数大于阈值，则进行 resize
          */
         if (numKeysToBeAdded > threshold) {
             int targetCapacity = (int)(numKeysToBeAdded / loadFactor + 1);
             if (targetCapacity > MAXIMUM_CAPACITY)
                 targetCapacity = MAXIMUM_CAPACITY;
             int newCapacity = table.length;
+            // 获取大于 targetCapacity 的最小 capacity 
             while (newCapacity < targetCapacity)
                 newCapacity <<= 1;
             if (newCapacity > table.length)
                 resize(newCapacity);
         }
-
+        
+        // 遍历参数 m 并依次 put 到本 hashmap 中
         for (Map.Entry<? extends K, ? extends V> e : m.entrySet())
             put(e.getKey(), e.getValue());
     }
@@ -684,6 +786,15 @@ public class HashMap<K,V>
         return result;
     }
 
+    /**
+     * 哈希表中的节点对象，包含：
+     * 1. 数据的键 key
+     * 2. 数据的值 value
+     * 3. 链接的下一个节点 next
+     * 4. 当前节点的 hash 值
+     * @param <K>
+     * @param <V>
+     */
     static class Entry<K,V> implements Map.Entry<K,V> {
         final K key;
         V value;
@@ -742,6 +853,7 @@ public class HashMap<K,V>
          * This method is invoked whenever the value in an entry is
          * overwritten by an invocation of put(k,v) for a key k that's already
          * in the HashMap.
+         * 当 key 存在，对 key 对应的 value 进行更新时调用
          */
         void recordAccess(HashMap<K,V> m) {
         }
@@ -760,10 +872,16 @@ public class HashMap<K,V>
      * method to resize the table if appropriate.
      *
      * Subclass overrides this to alter the behavior of put method.
+     * 插入新元素（链表头部插入法）
      */
     void addEntry(int hash, K key, V value, int bucketIndex) {
+        // 取出哈希桶内的第一个元素
         Entry<K,V> e = table[bucketIndex];
+        // 创建新元素，且下一个元素 next 为当前的第一个元素 e
+        // 将该新元素设置为哈希桶内的第一个元素
         table[bucketIndex] = new Entry<>(hash, key, value, e);
+        // 元素个数 size + 1
+        // 如果元素个数达到阈值，则进行 resize 重构，容量变为原先的 2 倍
         if (size++ >= threshold)
             resize(2 * table.length);
     }
@@ -775,8 +893,14 @@ public class HashMap<K,V>
      *
      * Subclass overrides this to alter the behavior of HashMap(Map),
      * clone, and readObject.
+     * 新增元素
+     * 个人思考：这里为什么不复用 addEntry？
+     * createEntry 和 addEntry 相比不需要 resize,
+     * 是因为在上游（构造器）中已经根据要拷贝的元素个数已经设置了合适的容量
+     * 如果复用 addEntry，则可能在添加元素过程中，多次 resize
      */
     void createEntry(int hash, K key, V value, int bucketIndex) {
+        /* 在哈希桶链表的头部插入元素 */
         Entry<K,V> e = table[bucketIndex];
         table[bucketIndex] = new Entry<>(hash, key, value, e);
         size++;
